@@ -1,0 +1,812 @@
+---
+title: "Top Youtubers and Trending Videos Analysis"
+author: 'Group 8: Xu Li, Yo-Wen Chang, Peixin Lin, Ruiying Liang, Runqing Liu, Hans
+  Yan, Kok Kent Chong'
+output:
+  rmarkdown::github_document: default
+  html_document: default
+---
+![alt text here](1668558779423.jpg)
+# Introduction
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+YouTube is an American online video-sharing and social media platform owned by Google. It is the world's most popular and most used video platform today, with more than one billion monthly users who collectively watch more than one billion hours of videos each day. 
+
+YouTube has had an unprecedented social impact, influencing popular culture and internet trends and creating multimillionaire celebrities. To get an insight into the trending culture and topics, we will analyze the dataset of most subscribed YouTube channels, including categories, number of subscribers and views, etc. In addition, YouTube has a list of trending videos that is updated constantly, which we could use to take one more step in analyzing its trending videos to see what is typical between them. On the other hand, these insights could also be useful for creators who want to increase the popularity of their videos on YouTube.
+
+Our analytics focus on three key topics: 
+1)Engagement difference by Youtubers’ nationalities & categories
+2)Viewers’ negative sentiment by their countries & videos categories
+3)Viewership Habits by Countries
+
+Characteristics of trending videos or youtubers are carefully examined with insights and findings summarized in the end.
+
+```{r pressure, echo=FALSE}
+#load library
+library(dplyr)
+library(stringr)
+library(lubridate) 
+library(scales)
+library(ggplot2)
+library(tidyr)
+library(knitr)
+library(scales)
+library(tidyverse)
+library(tm)
+library(NLP)
+library(tmap)
+library(RColorBrewer)
+library(wordcloud)
+library(psych)
+library(ggpubr)
+library(VIM)
+library(naniar)
+library(car)
+library(RJSONIO)
+library(reshape)
+library(rmarkdown)
+```
+
+
+# Dataset1 Import and Preprocessing
+
+## Data Description
+
+```{r}
+#load data
+youtuber <- read.csv("youtube200.csv", header=T)
+head(youtuber)
+
+```
+
+
+```{r}
+#data description
+describe(youtuber)
+
+```
+
+## Missing Values Checking
+
+```{r}
+vis_miss(youtuber)
+gg_miss_var(youtuber,show_pct = TRUE) 
+```
+
+```{r}
+#Missing data
+pct_miss(youtuber) #overall percent of missing data
+pct_miss(youtuber$Avg1Day)
+pct_miss(youtuber$Avg3Day)
+pct_miss(youtuber$Avg7Day)
+pct_miss(youtuber$Avg14Day)
+```
+The percentages of missing data in Avg1Day and Avg3Day is higher than 20%, especially for Avg1Day.These two variables are not suitable for further analysis as the percentages of missing data is high, making attempt to impute values will not make much sense.
+
+```{r}
+matrixplot(youtuber, sortby = "Views")
+```
+Here, the black and white variables represent a heatmap of values within each column, and red indicates a missing value. This can be useful for identifying if missing patterns are dependent on observed data values. It seems there is no distinct pattern for the missing values.
+
+
+# Descriptive Statistics
+
+```{r}
+ggplot(youtuber, aes(x=followers)) + 
+ geom_histogram(aes(y=..count..), colour="black", fill="#A52A2A")+
+ geom_density(alpha=.2, fill="#FF6666")+ scale_x_continuous(labels = function(x) format(x, scientific = TRUE))+theme_classic()+theme(axis.text = element_text(size = 20),axis.title = element_text(size = 20))
+```
+Majority of the accounts have 25-30M followers. Most of them have less than 100M followers and about 50% of them have less than 50M
+```{r}
+ggplot(youtuber, aes(x=Views)) + 
+ geom_histogram(aes(y=..count..), colour="black", fill="#A52A2A")+
+ geom_density(alpha=.2, fill="#FF6666")+ scale_x_continuous(labels = function(x) format(x, scientific = TRUE))+theme_classic()+theme(axis.text = element_text(size = 20),axis.title = element_text(size = 20))
+```
+Like the followers, the views are also left skewed with most of the accounts having about 25 Billion views from all the video posted thus far 
+```{r}
+ggplot(youtuber, aes(x=Likes)) + 
+geom_histogram(aes(y=..count..), colour="black", fill="#A52A2A", bins = 50)+ scale_x_continuous(labels = function(x) format(x, scientific = TRUE))+
+theme_classic()+theme(axis.text = element_text(size = 20),axis.title = element_text(size = 20))
+```
+On average, the top 200 youtube channels have about 233M likes respectively on their channels
+
+```{r}
+# remove column if the country column is empty
+youtuber_country = youtuber[!(is.na(youtuber$Country) | youtuber$Country==""), ]
+# top 200 youtubers by country
+topyoutuber_country = 
+  youtuber_country %>% 
+  head(200)  %>%
+  group_by(Country) %>%
+  summarize( Count=n()
+             ,Percent=round(Count/nrow(.)*100,digits=2)
+           ) %>%
+  arrange(desc(Count)) %>%
+  head(10) 
+
+ggplot(topyoutuber_country, aes(x = reorder(Country,-Count), y = Count)) +
+    geom_bar(stat="identity", color='black',fill='#A52A2A')+
+    geom_text(aes(label=Count), vjust = -0.5, colour = "black") +
+    scale_x_discrete(name ="Country") +
+    theme_classic()+theme(axis.text = element_text(size = 15),axis.title = element_text(size = 15))
+
+```
+```{r}
+# create language dataframe
+language = data.frame (
+  countrylist  = c("US","IN","BR","KR","MX","RU","BY","CA","CL","NO"),
+  Language = c("English","English","Portuguese","Korean","Spanish","Russian","Russian","English","Spanish","Norwegian")
+)
+
+# join the language with the country and display the result in the bar chart
+topyoutuber_country %>%
+  left_join(language,by = c("Country" = "countrylist")) %>%
+  group_by(Language) %>%
+  summarize( Count_Youtuber=sum(Count)) %>%
+  arrange(desc(Count_Youtuber)) %>%
+  ggplot(aes(x = reorder(Language,-Count_Youtuber), y = Count_Youtuber)) +
+    geom_bar(stat="identity", color='black',fill='#A52A2A')+
+    geom_text(aes(label=Count_Youtuber), vjust = -0.5, colour = "black") +
+    scale_x_discrete(name ="Language") +
+    theme_classic()+theme(axis.text = element_text(size = 15),axis.title = element_text(size = 15))
+```
+According to the findings, top2 countries for top200 youtubers are Indian and US. Moreover, creating channels in English-speaking countries is more likely to reach a global audience.
+
+```{r}
+df <- youtuber %>% 
+  group_by(MainVideoCategory) %>% # Variable to be transformed
+  count() %>% 
+  ungroup() %>% 
+  mutate(perc = `n` / sum(`n`)) %>% 
+  arrange(perc) %>%
+  mutate(labels = scales::percent(perc))
+
+ggplot(df, aes(x = MainVideoCategory, y = n, fill = n)) +
+    geom_bar(binwidth=1, stat="identity") +theme_light() +
+    scale_fill_gradient(low="#A52A2A", high="#FA8072",limits=c(0,320)) +
+    theme(axis.title.y=element_text(angle=0))+ 
+    coord_polar()+ 
+    aes(x=reorder(MainVideoCategory, n)) 
+```
+More than 50%  of the top 200 Youtubers fall under the category of “Music” and “Entertainment”, with gaming coming third.
+
+# Key Topic 1:Engagement difference by Youtubers’ nationalities & categories
+
+```{r}
+
+youtuber$like_rate=youtuber$Likes/youtuber$Views
+youtuber_top_country<- youtuber %>%
+ filter(Country=='US'|Country=='IN'|Country=='BR'|Country=='KR'|Country=='MX'|Country=='RU') %>%
+ select_all()
+ggplot(data=youtuber_top_country,aes(x=Country, y=like_rate, size=followers))+geom_boxplot()+geom_point(color='#A52A2A')
+ 
+```
+The like rate distribution by countries is skewed to the lower level with only a few distinguished youtubers (outliers) with higher like rate.Besides that, many youtubers with a higher like-rate have less followers.
+
+
+```{r}
+options(repr.plot.width=15, repr.plot.height=8)
+youtuber_top_Cate<- youtuber %>%
+ filter(MainVideoCategory=='Music'| MainVideoCategory=='Entertainment'|MainVideoCategory=='Education'|MainVideoCategory=='Gaming'|MainVideoCategory=='People & Blogs') %>%
+ select_all()
+
+ggplot(data=youtuber_top_Cate,aes(x=MainVideoCategory, y=like_rate, size=followers))+geom_boxplot()+geom_point(color='#A52A2A')
+```
+Among the top 5 categories, the categories with highest like rate are Gaming videos, which is also with a high variance in like rate.
+The category with lowest average like rate are ducation videos, whose distribution is relatively concentrated (small variance)
+
+```{r}
+library(corrplot)
+options(repr.plot.width=16, repr.plot.height=16)
+youtuber_numeric<-youtuber[,c(6,8,17:29)]
+youtuber_numeric<-youtuber_numeric[,colSums(is.na(youtuber_numeric))==0]
+cor_data<-cor(youtuber_numeric)
+corrplot(corr =cor_data, p.mat = cor_data,method = "square",
+         type="upper",
+         tl.pos="lt", tl.cex=1, tl.col="black",tl.srt = 45,tl.offset=0.5,
+         insig="label_sig",sig.level = c(.001, .01, .05),
+         pch.cex = 0.8,pch.col = "black",col = colorRampPalette(c("grey", "#D22B2B"))(5))
+corrplot(corr = cor_data, method = "number",
+         type="lower",add=TRUE,
+         tl.pos = "n",cl.pos = "n",diag=FALSE,
+         number.digits = 3,number.cex = 0.5,col = "black",number.font = NULL)
+```
+Views and followers have the highest correlation. Further analytics on the correlation will be conducted below.
+
+```{r}
+options(repr.plot.width=10, repr.plot.height=8)
+ggplot(data=youtuber_top_Cate,aes(x=log(followers), y=Views, color=MainVideoCategory))+geom_point(size=3)+
+  stat_smooth(method='lm',formula=y~x)+scale_color_brewer(palette='Reds')
+```
+```{r}
+options(repr.plot.width=10, repr.plot.height=8)
+ggplot(data=youtuber_top_country,aes(x=log(followers), y=Views, color=Country))+geom_point(size=3)+geom_smooth(method='lm')+scale_color_brewer(palette='Reds')
+```
+```{r}
+#anova
+ano_cate<-aov(Views/log(followers)~MainVideoCategory,data=youtuber_top_Cate)
+summary(ano_cate)
+```
+
+```{r}
+ano_cty<-aov(Views/log(followers)~Country,data=youtuber_top_country)
+summary(ano_cty)
+```
+Grouping by category, number of youtuber's followers has positive correlation with their number of views. Youtubers on Education category get higher number of views than other categories when they have the same number of followers. Gaming youtubers get the lowest number of views when having the similar magnitude followers.
+Grouping by country, With the same magnitude followers, Youtubers' views are highest in India, followed by US, BR and the Korean(lowest)
+The ANOVA tests indicate the difference of  views/log(followers) is significant for different categories and countries.
+
+# Dataset2 Import and  Preprocessing
+
+## Data Loading
+Our original data consists of 5 different videos collected from Kaggle. US_raw, GB_raw, CA_raw and IN_raw are the records of trending videos in United States, Great British, Canada and India respectively. Dataframe youtuber consists the information about the top 200 most popular youtubers. Besides, our original data only contain a categoryID but miss the name of each category, it is essential to find what category each categroyID is corresponding to. For that purpose, other four json files are also read.
+
+```{r}
+#read csv
+US_raw <- read.csv("US_youtube_trending_data.csv")
+GB_raw <- read.csv("GB_youtube_trending_data.csv")
+CA_raw <- read.csv("CA_youtube_trending_data.csv")
+IN_raw <- read.csv("IN_youtube_trending_data.csv")
+youtuber <- read.csv("top_200_youtubers.csv")
+
+#read json
+us_cat_name <- fromJSON("US_category_id.json")
+gb_cat_name <- fromJSON("GB_category_id.json")
+ca_cat_name <- fromJSON("CA_category_id.json")
+in_cat_name <- fromJSON("IN_category_id.json")
+
+```
+##D ata Preprocessing
+Before diving deeper into data for further analysis, it is significant to check the quality of the data. In this step, we did some dirty data work including dropping irrelevant columns, formatting date and time, add other necessary columns, joining csv with json to category name and delete duplicate rows whose title stayed on the trending list for days.
+```{r}
+US <- US_raw
+GB <- GB_raw
+CA <- CA_raw
+IN <- IN_raw
+
+#drop irrelevant columns
+US <- subset(US, select = -c(video_id, channelId,thumbnail_link,description))
+GB <- subset(GB, select = -c(video_id, channelId,thumbnail_link,description))
+CA <- subset(CA, select = -c(video_id, channelId,thumbnail_link,description))
+IN <- subset(IN, select = -c(video_id, channelId,thumbnail_link,description))
+
+#add country column
+US[,"country"] <- "US"
+GB[,"country"] <- "GB"
+CA[,"country"] <- "CA"
+IN[,"country"] <- "IN"
+
+#date time format
+US$publishedAt <- ymd_hms(US$publishedAt)
+US$trending_date <- ymd_hms(US$trending_date)
+GB$publishedAt <- ymd_hms(GB$publishedAt)
+GB$trending_date <- ymd_hms(GB$trending_date)
+CA$publishedAt <- ymd_hms(CA$publishedAt)
+CA$trending_date <- ymd_hms(CA$trending_date)
+IN$publishedAt <- ymd_hms(IN$publishedAt)
+IN$trending_date <- ymd_hms(IN$trending_date)
+```
+
+```{r}
+#Match Category names to Category IDs from US_category_id.json file
+
+#extract ids of categories into a vector
+list <- us_cat_name[["items"]]
+items <- length(list)
+
+US$categoryId <- as.character(US$categoryId)
+ids <- numeric(items)
+for(i in seq_along(list)){
+  ids[i] <- us_cat_name[["items"]][[i]][[3]]
+}
+
+#extract names of categories into a vector
+names <- character(items)
+for(i in seq_along(list)){
+  names[i] <- us_cat_name[["items"]][[i]][[4]][[1]]
+}
+
+#join dataframe with category name and drop categoryId
+cat <- as.data.frame(cbind(ids,names))
+US <- US %>%
+  left_join(cat, by=c("categoryId"="ids")) %>%
+  dplyr::rename("category"="names") %>%
+  select(-categoryId)
+
+```
+
+```{r}
+#Match Category names to Category IDs from GB_category_id.json file
+
+#extract ids of categories into a vector
+gb_list <- gb_cat_name[["items"]]
+gb_items <- length(gb_list)
+
+GB$categoryId <- as.character(GB$categoryId)
+gb_ids <- numeric(gb_items)
+for(i in seq_along(gb_list)){
+  gb_ids[i] <- gb_cat_name[["items"]][[i]][[3]]
+}
+
+#extract names of categories into a vector
+gb_names <- character(gb_items)
+for(i in seq_along(gb_list)){
+  gb_names[i] <- gb_cat_name[["items"]][[i]][[4]][[1]]
+}
+
+#join dataframe with category name and drop categoryId
+gb_cat <- as.data.frame(cbind(gb_ids,gb_names))
+gb_cat[nrow(gb_cat)+1,]=c(29,"Nonprofits & Activism")
+GB <- GB %>%
+  left_join(gb_cat, by=c("categoryId"="gb_ids")) %>%
+  dplyr::rename("category"="gb_names") %>%
+  select(-categoryId)
+
+```
+
+```{r}
+#Match Category names to Category IDs from CA_category_id.json file
+
+#extract ids of categories into a vector
+ca_list <- ca_cat_name[["items"]]
+ca_items <- length(ca_list)
+
+CA$categoryId <- as.character(CA$categoryId)
+ca_ids <- numeric(ca_items)
+for(i in seq_along(ca_list)){
+  ca_ids[i] <- ca_cat_name[["items"]][[i]][[3]]
+}
+
+#extract names of categories into a vector
+ca_names <- character(ca_items)
+for(i in seq_along(ca_list)){
+  ca_names[i] <- ca_cat_name[["items"]][[i]][[4]][[1]]
+}
+
+#join dataframe with category name and drop categoryId
+ca_cat <- as.data.frame(cbind(ca_ids,ca_names))
+ca_cat[nrow(ca_cat)+1,]=c(29,"Nonprofits & Activism")
+CA <- CA %>%
+  left_join(ca_cat, by=c("categoryId"="ca_ids")) %>%
+  dplyr::rename("category"="ca_names") %>%
+  select(-categoryId)
+```
+
+```{r}
+#Match Category names to Category IDs from IN_category_id.json file
+
+#extract ids of categories into a vector
+in_list <- in_cat_name[["items"]]
+in_items <- length(in_list)
+
+IN$categoryId <- as.character(IN$categoryId)
+in_ids <- numeric(in_items)
+for(i in seq_along(in_list)){
+  in_ids[i] <- in_cat_name[["items"]][[i]][[3]]
+}
+
+#extract names of categories into a vector
+in_names <- character(in_items)
+for(i in seq_along(in_list)){
+  in_names[i] <- in_cat_name[["items"]][[i]][[4]][[1]]
+}
+
+#join dataframe with category name and drop categoryId
+in_cat <- as.data.frame(cbind(in_ids,in_names))
+in_cat[nrow(in_cat)+1,]=c(29,"Nonprofits & Activism")
+IN <- IN %>%
+  left_join(in_cat, by=c("categoryId"="in_ids")) %>%
+  dplyr::rename("category"="in_names") %>%
+  select(-categoryId)
+```
+
+
+```{r}
+#Add a column indicating if the trending video is created by the top 200 youtubers
+US$top200youtuber <- FALSE
+US[which(US$channelTitle %in% youtuber$Channel.Name),]$top200youtuber <- TRUE
+
+GB$top200youtuber <- FALSE
+GB[which(GB$channelTitle %in% youtuber$Channel.Name),]$top200youtuber <- TRUE
+
+CA$top200youtuber <- FALSE
+CA[which(CA$channelTitle %in% youtuber$Channel.Name),]$top200youtuber <- TRUE
+
+IN$top200youtuber <- FALSE
+IN[which(IN$channelTitle %in% youtuber$Channel.Name),]$top200youtuber <- TRUE
+
+```
+
+```{r}
+#union 4 datasets toether
+ALL = rbind(CA,US,GB,IN)
+```
+
+```{r}
+#Distinct data, delete duplicated titles which stayed on the trending list for days
+ALL <- ALL %>%
+  group_by(title,publishedAt,channelTitle,category,country,tags,comments_disabled,top200youtuber) %>%
+  distinct() %>%
+  summarize(trendingtimes = n(),
+            likes=max(likes),
+            dislikes=max(dislikes),
+            view_count=max(view_count),
+            comment_count=max(comment_count))
+# convert comments_disabled true/false into 1/0
+ALL <- ALL %>% 
+  mutate(comments_disabled, disabled = ifelse(comments_disabled=="True", 1, 0))
+
+head(ALL)
+```
+# Key topic 2: Viewers’ negative sentiment by their countries & videos categories
+The first interesting topic we want to discover is whether the YouTube viewers negative sentiment are different across countries and videos categories. In our datasets, there are two variables that are associated with controversial opinions and negative sentiment. One is  `disklie`, which stores the count of dislikes for each video. The other is `comments_disabled`, which indicates whether a video allow its viewer to leave a comment. 
+To better expose the viewers attitudes towards the videos, we define the metric of dislike percentage as the number of dislikes multiply by the sum of the number of dislikes and likes. After creating this metric, we also group our dataset by category and country, to summarize the average dislike percentage and comments-disabled percentage for each category and country.
+
+```{r}
+# dislike percentage 
+ALL$dislikePerc <- 0
+ALL[which(ALL$likes!=0),] <- ALL[which(ALL$likes!=0),] %>%
+  mutate(dislikePerc = dislikes/(likes+dislikes))
+    
+# group by category 
+groupedVideos <- ALL %>%
+              group_by(category) %>%
+              summarize("dislikePercMean" = mean(dislikePerc), 
+                        "disabledPercMean" = mean(disabled))
+
+# group by category and country
+groupedVideos2 <- ALL %>%
+              group_by(category,country) %>%
+              summarize("Dislike Percentage" = mean(dislikePerc), 
+                        "Comments-disabled Percentage" = mean(disabled))
+```
+
+Next, we want to visualize the grouped dataset we just created to unlock insight of how negative sentiment vary across video categories and trending list countries.
+```{r}
+# create color palette
+coul <- brewer.pal(4, "Reds") 
+coul <- colorRampPalette(coul)(15)
+coul <- rev(coul)
+
+# plot "Dislike Percentage by Category and Country"
+ggplot(groupedVideos, aes(dislikePercMean, reorder(category, dislikePercMean), fill = category, label=percent(dislikePercMean,accuracy=0.1))) +
+  geom_bar(col = "black", stat = "identity") +
+  scale_fill_manual(values=coul) +
+  #geom_line(aes(viewMean, reorder(category, dislikePercMean)), group = 1, lwd = 1, lty = 3, col="grey") +
+  labs(y = "Category",
+       x = "Dislike Percentage",
+       title='dislike% = # of dislike/(# of dislike + # of like)',
+       subtitle='News&Politics has the highest dislike percentage') +
+  geom_text(hjust = -0.02, size=2.5) +
+  theme_classic()
+#ggsave("1.png",width = 8,height = 5)
+
+# plot "Disabled-Comments Percentage by Category and Country"
+ggplot(groupedVideos, aes(disabledPercMean, reorder(category, disabledPercMean), fill = category, label=percent(disabledPercMean,accuracy=0.1))) + 
+  geom_bar(col = "black", stat = "identity") +
+  scale_fill_manual(values=coul) +
+  labs(y = "Category",
+       x = "Disabled-Comments Percentage",
+       title='comment-disabled% = comment-disabled videos/total videos',
+       subtitle='News&Politics has the highest comment-disabled percentage') +
+  geom_text(hjust = -0.02, size=2.5) +
+  theme_classic()
+#ggsave("2.png",width = 8,height = 5)
+
+
+#country difference
+subset <- groupedVideos2 %>%
+  filter(category == c("News & Politics")) %>%
+  gather(metric, value, "Dislike Percentage":"Comments-disabled Percentage" )
+
+
+ggplot(subset, aes(country, value, fill = metric, label=percent(value,accuracy=0.1))) + 
+  geom_bar(position="dodge", col = "black", stat = "identity") +
+  scale_fill_manual(values=c("#A52A2A","#FCBFA8")) +
+  geom_text(position = position_dodge2(width = 0.9),hjust = 0.45,vjust=-0.5, size=3) +
+  labs(y = "",
+       x = "",
+       subtitle="Compared with western countriesm, India seems to have a looser news control environment")+
+  theme_classic() 
+
+#ggsave("3.pdf",width = 8,height = 6)
+```
+Based on the above pictures, we found that News&Politics is the category where negative sentiment dwell most and news control environment differ from each country. Thus, we decided to dive deeper into the category of News&Politics to explore the different attitudes News&Politics in different country.
+
+```{r}
+#define a function which can generate a wordcloud
+
+freqWord = function(df,categ,country,remove) {
+docs = Corpus(VectorSource(df[(df$category == categ)&(df$country==country),]$tags))
+
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "\\|")
+# Convert the text to lower case
+docs <- tm_map(docs, content_transformer(tolower))
+# Remove numbers
+docs <- tm_map(docs, removeNumbers)
+# Remove english common stopwords
+docs <- tm_map(docs, removeWords, stopwords("english"))
+docs <- tm_map(docs, removeWords, remove)
+# Remove your own stop word
+# specify your stopwords as a character vector
+# docs <- tm_map(docs, removeWords, c("des", "les", "pas", "de", "est", "plus", "vos")) 
+# Remove punctuations
+docs <- tm_map(docs, removePunctuation)
+# Eliminate extra white spaces
+docs <- tm_map(docs, stripWhitespace)
+# Text stemming
+# docs <- tm_map(docs, stemDocument)
+dtm <- TermDocumentMatrix(docs)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+
+wordcloud(words = d$word, freq = d$freq,min.freq = 20,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          scale=c(3.2,0.4),
+          colors=c("#282828","#FF0000"))
+#wordcloud2(d,color="#FF0000",
+           #backgroundColor = "#282828")
+}
+```
+
+```{r}
+negative <- ALL %>%
+  filter(dislikePerc > 0.10)
+freqWord(negative,'News & Politics','US',c('news','today'))
+```
+
+The most controversial topic in the US is about election
+
+```{r}
+freqWord(negative,'News & Politics','CA',c('news','today'))
+```
+
+The result of Canada is between US and GB.
+```{r}
+freqWord(negative,'News & Politics','GB',c('news','today'))
+```
+
+The most controversial topic in GB is about coronavirus.
+```{r}
+freqWord(negative,'News & Politics','IN',c('news','today','live'))
+```
+
+Indian did not care about western politics too much
+# Key topic 3: Viewership Habits by Countries
+After exploring the different attitudes towards News&Politics in different country. Our next key question is if there are some common viewing habits existing on different countries. We try to answer questions by exploring if there are some common videos appearing on the trending list of different countries and what character theses videos have.
+
+## Overlapping number of videos
+```{r}
+# Heatmap for Video Overlaps between 4 English Speaking Countries: India, United States, Canada & United Kingdom
+
+countoverlap <- function(country_x, country_y) {
+  overlap <- country_x %>%
+    inner_join(country_y, by=c("title"="title")) %>%
+    distinct(title, .keep_all=TRUE)
+  n <- nrow(overlap)
+  return(n)
+}
+
+countrylst <- list()
+countrylst[[1]] <- US
+countrylst[[2]] <- CA
+countrylst[[3]] <- GB
+countrylst[[4]] <- IN
+
+M <- matrix(nrow = 4, ncol = 4)
+#count <- df()
+for (i in 1:4) {
+  for (n in 1:4){
+    count <- countoverlap(countrylst[[i]], countrylst[[n]])
+    M[i,n] <- count
+  }
+}
+countries <- c("US","CA", "GB", "IN")
+count <- data.frame(matrix(ncol=3,nrow=0, dimnames=list(NULL, c("CountryX", "CountryY", "SharedVideos"))))
+for (i in 1:4) {
+  for (n in 1:4){
+    c <- countoverlap(countrylst[[i]], countrylst[[n]])
+    count[nrow(count)+1,] = c(countries[i], countries[n], c)
+  }
+}
+M[1,1] = 0
+M[2,2] = 0
+M[3,3] = 0
+M[4,4] = 0
+rownames(M) <- c("US", "CA","GB","IN")
+colnames(M) <- c("US", "CA","GB","IN")
+M.1 <-melt(M)
+ggplot(M.1, aes(x = X2, y = X1)) + 
+  geom_raster(aes(fill=value)) + 
+  theme_bw() + theme(axis.text.x=element_text(size=9, angle=0, vjust=0.3),
+                     axis.text.y=element_text(size=9),
+                     plot.title=element_text(size=11)) + scale_fill_gradient(low = "white", high = "#FF0000") +
+  labs(x = "English Speaking Countries", y = "English Speaking Countries", title = "Videos Overlap") 
+```
+
+Evidently, we are able to observe that US and CA has the most overlapping videos, followed by GB while IN has the least overlapping videos, which is quite intuitive due to cultural similarity and geographic distance.
+
+## Commonality -> category: music, game, entertainment
+
+```{r}
+#Join data by title to find all videos which exist on the trending list of all 4 countries
+shared <- US %>%
+  inner_join(CA, by=c("title"="title")) %>%
+  inner_join(GB, by=c("title"="title")) %>%
+  inner_join(IN, by=c("title"="title")) %>%
+  distinct(title, .keep_all=TRUE)  %>%
+  select(1,3,4,5,6,7,8,9,10,11,12,13,14) %>%
+  dplyr::rename( channelTitle=channelTitle.x,view_count=view_count.x,likes=likes.x, tags=tags.x,
+         dislikes=dislikes.x,comment_count=comment_count.x, category=category.x, top200youtuber=top200youtuber.x)
+
+```
+
+```{r}
+#group overlapping videos by category and compute the percentage
+group_cate <- shared %>%
+  group_by(category) %>%
+  summarize(percentage = n()/nrow(shared))
+
+#plot the above result
+ggplot(group_cate, aes(percentage, reorder(category, percentage), fill = category, label=percent(percentage,accuracy=0.1))) +
+  geom_bar(col = "black", stat = "identity") +
+  scale_fill_manual(values=coul) +
+  #geom_line(aes(viewMean, reorder(category, dislikePercMean)), group = 1, lwd = 1, lty = 3, col="grey") +
+  labs(y = "Category",
+       x = "category percentage in overlapping videos",
+       title='percentage=# of videos in the category/total videos',
+       subtitle='Music, Gaming and Entertianment are top3') +
+  geom_text(hjust = -0.02, size=2.5) +
+  theme_classic()
+
+# group union videos by category and compute the percentage
+group_cate <- ALL %>%
+  group_by(category) %>%
+  summarize(percentage = n()/nrow(ALL))
+
+#plot the above result
+ggplot(group_cate, aes(percentage, reorder(category, percentage), fill = category, label=percent(percentage,accuracy=0.1))) +
+  geom_bar(col = "black", stat = "identity") +
+  scale_fill_manual(values=coul) +
+  #geom_line(aes(viewMean, reorder(category, dislikePercMean)), group = 1, lwd = 1, lty = 3, col="grey") +
+  labs(y = "Category",
+       x = "category percentage in union videos",
+       title='percentage=# of videos in the category/total videos',
+       subtitle='Music, Gaming and Entertianment are top3') +
+  geom_text(hjust = -0.02, size=2.5) +
+  theme_classic()
+
+
+```
+
+From the above two pictures, we can see that Music, Entertainment and Gaming are always top 3 no matter in overlapping videos or union videos, but compared with the percentage in union videos, music accounts for a greater percenate abput 28% in overlapping videos while only accounts for 13% in union videos. Music is the most shared category across the world. It might be because that music can arouse resonace more easily.
+
+## wordcould of overlapping videos by category
+```{r}
+freqWord1 = function(categ,remove) {
+docs = Corpus(VectorSource(shared[shared$category == categ,]$tags))
+
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "\\|")
+# Convert the text to lower case
+docs <- tm_map(docs, content_transformer(tolower))
+# Remove numbers
+docs <- tm_map(docs, removeNumbers)
+# Remove english common stopwords
+docs <- tm_map(docs, removeWords, stopwords("english"))
+docs <- tm_map(docs, removeWords, remove)
+# Remove your own stop word
+# specify your stopwords as a character vector
+# docs <- tm_map(docs, removeWords, c("des", "les", "pas", "de", "est", "plus", "vos")) 
+# Remove punctuations
+docs <- tm_map(docs, removePunctuation)
+# Eliminate extra white spaces
+docs <- tm_map(docs, stripWhitespace)
+# Text stemming
+# docs <- tm_map(docs, stemDocument)
+dtm <- TermDocumentMatrix(docs)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+
+wordcloud(words = d$word, freq = d$freq,min.freq = 10,
+          max.words=100, random.order=FALSE, rot.per=0.35, 
+          scale=c(3.2,0.4),
+          colors=c("#282828","#FF0000"))
+#wordcloud2(d,color="#FF0000",
+           #backgroundColor = "#282828")
+}
+```
+
+
+```{r}
+group_chan <- shared %>%
+  group_by(channelTitle) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+
+group_chan %>%
+  left_join(shared, by=c("channelTitle"="channelTitle")) %>%
+  filter(category=="Music") %>%
+  select(channelTitle, count, top200youtuber) %>%
+  distinct()
+
+
+#par(family="AppleGothic")
+freqWord1("Music",c("official", "music","video","new","album","lyrics"))
+```
+We can see English pop music are appearing often on the overlapping trending list, but surprisingly, there are many korean characters all of which are about kpop. Kpop explosion breaks cultural barriers and has become a global phenomenon. Their visual effects involving colourful costumes and perfect dancing are conquering the world.
+
+```{r}
+group_chan <- shared %>%
+  group_by(channelTitle) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+
+group_chan %>%
+  left_join(shared, by=c("channelTitle"="channelTitle")) %>%
+  filter(category=="Entertainment") %>%
+  select(channelTitle, count, top200youtuber) %>%
+  distinct()
+
+
+#par(family="AppleGothic")
+freqWord1("Entertainment",c("official", "none","video","new","album","lyrics"))
+```
+
+There are some entertainment giants appeared in the wordcloud, like Marvel, Netflix and so on. There are also some media personalities,individual content creator whose views and subscribers are comparable to entertainment giants.
+
+```{r}
+group_chan <- shared %>%
+  group_by(channelTitle) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+
+group_chan %>%
+  left_join(shared, by=c("channelTitle"="channelTitle")) %>%
+  filter(category=="Entertainment") %>%
+  select(channelTitle, count, top200youtuber) %>%
+  distinct()
+
+
+#par(family="AppleGothic")
+freqWord1("Gaming",c("game"))
+```
+
+As for game, it is surprising that it is clash of clans, a mobile game about kingdom building, other than competitive PC games, bring the most common video content on youtube.
+
+# Conclusion, Limitation and Next steps
+
+## Conlusions
+Key Question 1: Engagement Difference by Youtubers’ Nationalities & Categories
+User engagement(like/views, views/followers) is significantly different grouped by YouTubers' nationalities and categories.
+
+Key Question 2: Viewers’ Negative Sentiment by their Countries and Videos Categories
+Topics related to politics and covid-19 pandemic exhibit a controversial manner .
+Western countries share a more common viewership habit compared with India.
+
+Key Question 3: Viewership Habits by English Speaking Countries
+Music, Entertainment, & Gaming are categories enjoyed by all aforementioned nations. 
+KPop exhibits a rather surprisingly popular fashion in all four nations.
+
+## Limitations
+  Our sample only includes the most popular videos without any ordinary videos so more comprehensive conclusions could not be drawn.
+  We also ignore the connection between YouTubers and their videos due to want of more features and difficulty of linking two datasets. 
+  
+## Next Steps
+We would like to include more ordinary videos rather than those only coming from the trending list
+We would like to explore relations between YouTubers and their videos through additional features such as video quality, shooting method, editing technique and etc. 
+Natural Language Processing & Deep Learning
+
+  
